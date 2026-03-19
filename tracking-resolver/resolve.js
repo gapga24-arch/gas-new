@@ -18,22 +18,33 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0'
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 720 },
+      ignoreHTTPSErrors: true
     });
     const page = await context.newPage();
 
-    await page.goto(shortUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2000);
+    await page.goto(shortUrl, { waitUntil: 'load', timeout: 30000 });
+    try {
+      await page.waitForURL(/reqCodeNo1=|japanpost/, { timeout: 15000 });
+    } catch (_) {
+      await page.waitForTimeout(3000);
+    }
 
     const finalUrl = page.url();
-    const match = finalUrl.match(/reqCodeNo1=(\d+)/) || finalUrl.match(/jp&reqCodeNo1=(\d+)/);
-    if (match) {
-      trackingNumber = match[1];
+    console.log('最終URL: ' + finalUrl.substring(0, 120) + (finalUrl.length > 120 ? '...' : ''));
+
+    let match = finalUrl.match(/reqCodeNo1=(\d+)/) || finalUrl.match(/jp&reqCodeNo1=(\d+)/);
+    if (match) trackingNumber = match[1];
+    if (!trackingNumber) {
+      const body = await page.content();
+      match = body.match(/reqCodeNo1=(\d{10,14})/) || body.match(/jp&reqCodeNo1=(\d+)/);
+      if (match) trackingNumber = match[1];
     }
     if (!trackingNumber) {
       const body = await page.content();
-      const m = body.match(/reqCodeNo1=(\d{12,14})/) || body.match(/jp&reqCodeNo1=(\d+)/);
-      if (m) trackingNumber = m[1];
+      match = body.match(/お問い合わせ番号[\s\S]{0,80}?(\d{4}-\d{4}-\d{4})/);
+      if (match) trackingNumber = match[1].replace(/-/g, '');
     }
 
     await browser.close();
