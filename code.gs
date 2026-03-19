@@ -1178,17 +1178,30 @@ function parseTradeInShippedMail_(message) {
   var directJapanPost = haystack.match(/trackings\.post\.japanpost\.jp[^\s"']*reqCodeNo1=(\d+)/);
   if (directJapanPost) trackingNumber = directJapanPost[1];
   var trackingLink = '';
+  // HTMLの<a href="...">から c.gle を最優先で抽出（途中で切れないよう最長URLを採用）
+  if (html) {
+    var cgleFromHtml = [];
+    var reA = /<a[^>]+href\s*=\s*["'](https?:\/\/c\.gle\/[^"']+)["'][^>]*>/ig;
+    var ma;
+    while ((ma = reA.exec(html)) !== null) {
+      cgleFromHtml.push(ma[1]);
+    }
+    if (cgleFromHtml.length > 0) {
+      cgleFromHtml.sort(function (a, b) { return b.length - a.length; });
+      trackingLink = cgleFromHtml[0];
+    }
+  }
   if (haystack.indexOf('trackings.post.japanpost') >= 0) {
     var jpMatch = haystack.match(/reqCodeNo1=(\d{12,14})/);
     if (jpMatch) trackingNumber = jpMatch[1];
   }
   var hrefBlock = haystack.match(/href\s*=\s*["']?(https?:\/\/c\.gle\/[^"']+)["']?/i) ||
                   haystack.match(/href\s*=\s*3D\s*["']?(https?:\/\/c\.gle\/[^"'\s>]+)/i);
-  if (hrefBlock) {
+  if (!trackingLink && hrefBlock) {
     trackingLink = hrefBlock[1].replace(/&amp;/g, '&').replace(/\s/g, '').replace(/["']+$/, '').trim();
   }
   if (!trackingLink && haystack.indexOf('c.gle') >= 0) {
-    var allCgle = haystack.match(/https?:\/\/c\.gle\/[A-Za-z0-9_.-]+/g);
+    var allCgle = haystack.match(/https?:\/\/c\.gle\/[^\s"'<>]+/g);
     if (allCgle) {
       allCgle.sort(function (a, b) { return b.length - a.length; });
       trackingLink = allCgle[0].replace(/&amp;/g, '&').replace(/["']+$/, '').trim();
@@ -1199,7 +1212,15 @@ function parseTradeInShippedMail_(message) {
                     haystack.match(/荷物の追跡[\s\S]{0,800}?href\s*=\s*3D\s*["']?(https?:\/\/[^\s"'>]+)/i);
     if (hrefMatch) trackingLink = hrefMatch[1].replace(/&amp;/g, '&').replace(/["']+$/, '').replace(/\s/g, '').trim();
   }
-  if (trackingLink) trackingLink = trackingLink.replace(/["']+$/, '');
+  if (trackingLink) {
+    trackingLink = trackingLink
+      .replace(/["'>].*$/, '')
+      .replace(/(?:style|target|class|rel|aria-[a-z-]+)=.*$/i, '')
+      .replace(/&amp;/g, '&')
+      .trim();
+    var cleanCgle = trackingLink.match(/https?:\/\/c\.gle\/[A-Za-z0-9._~!$&'()*+,;=:@%\/?-]+/i);
+    if (cleanCgle) trackingLink = cleanCgle[0];
+  }
   if (!trackingLink && haystack.indexOf('japanpost') >= 0) {
     var anyJp = haystack.match(/https?:\/\/[^\s"']*trackings?\.post\.japanpost[^\s"']*reqCodeNo1=\d+/);
     if (anyJp) {
@@ -1207,7 +1228,12 @@ function parseTradeInShippedMail_(message) {
       if (num) trackingNumber = num[1];
     }
   }
-  Logger.log('[下取り発送parse] tradeInId=' + tradeInId + ', linkLen=' + (trackingLink ? trackingLink.length : 0) + ', number=' + (trackingNumber || ''));
+  Logger.log(
+    '[下取り発送parse] tradeInId=' + tradeInId +
+    ', linkLen=' + (trackingLink ? trackingLink.length : 0) +
+    ', linkTail=' + (trackingLink ? trackingLink.slice(-30) : '') +
+    ', number=' + (trackingNumber || '')
+  );
   return { tradeInId: tradeInId, trackingLink: trackingLink, trackingNumber: trackingNumber };
 }
 

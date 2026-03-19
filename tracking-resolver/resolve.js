@@ -4,6 +4,19 @@
  */
 const { chromium, request } = require('playwright');
 
+function normalizeShortUrl_(url) {
+  if (!url) return '';
+  let s = String(url).trim();
+  // メールHTML断片が混ざるケース（...style=, target= など）を切り落とす
+  s = s.replace(/\s+/g, '');
+  s = s.replace(/&(amp;)?/g, '&');
+  s = s.replace(/["'>].*$/, '');
+  s = s.replace(/(?:style|target|class|rel|aria-[a-z-]+)=.*$/i, '');
+  // c.gle のURL本体だけを再抽出
+  const m = s.match(/https?:\/\/c\.gle\/[A-Za-z0-9._~!$&'()*+,;=:@%\/?-]+/i);
+  return m ? m[0] : s;
+}
+
 function extractTrackingNumber_(text) {
   if (!text) return '';
   let m = String(text).match(/reqCodeNo1=(\d{10,14})/);
@@ -56,7 +69,7 @@ async function resolveByHttp_(shortUrl) {
 }
 
 async function main() {
-  const shortUrl = (process.env.SHORT_URL || '').trim();
+  const shortUrl = normalizeShortUrl_(process.env.SHORT_URL || '');
   const tradeInId = (process.env.TRADE_IN_ID || '').trim();
   const gasWebAppUrl = (process.env.GAS_WEB_APP_URL || '').trim();
 
@@ -64,6 +77,7 @@ async function main() {
     console.error('SHORT_URL を設定してください（例: https://c.gle/...）');
     process.exit(1);
   }
+  console.log('入力URL長: ' + shortUrl.length + ', tail=' + shortUrl.slice(-30));
 
   let trackingNumber = '';
   let finalUrlForLog = shortUrl;
