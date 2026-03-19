@@ -1168,6 +1168,7 @@ function parseTradeInShippedMail_(message) {
   var content = getMessageContent_(message);
   var html = content.html;
   var text = content.text;
+  var htmlForLink = String(html || '').replace(/=\s*\r?\n/g, '');
   var haystack = (html || '') + '\n' + (text || '');
   haystack = haystack.replace(/=\s*\r?\n/g, '');
   haystack = haystack.replace(/\r?\n/g, ' ');
@@ -1178,15 +1179,29 @@ function parseTradeInShippedMail_(message) {
   var directJapanPost = haystack.match(/trackings\.post\.japanpost\.jp[^\s"']*reqCodeNo1=(\d+)/);
   if (directJapanPost) trackingNumber = directJapanPost[1];
   var trackingLink = '';
-  // HTMLの<a href="...">から c.gle を最優先で抽出（途中で切れないよう最長URLを採用）
-  if (html) {
+  // 1) 「荷物の追跡」アンカーの href を最優先（他リンク誤取得を防ぐ）
+  if (htmlForLink) {
+    var anchorSpecific =
+      htmlForLink.match(/href\s*=\s*3D\s*(https?:\/\/c\.gle\/[^\s"'>]+)[^>]*>\s*(?:荷物の追跡|=E8=8D=B7=E7=89=A9=E3=81=AE=E8=BF=BD=E8=B7=A1)/i) ||
+      htmlForLink.match(/href\s*=\s*["'](https?:\/\/c\.gle\/[^"']+)["'][^>]*>\s*(?:荷物の追跡|=E8=8D=B7=E7=89=A9=E3=81=AE=E8=BF=BD=E8=B7=A1)/i);
+    if (anchorSpecific) {
+      trackingLink = anchorSpecific[1];
+    }
+  }
+  // 2) HTMLの<a href="...">から c.gle を抽出（途中で切れないよう最長URLを採用）
+  if (htmlForLink) {
     var cgleFromHtml = [];
     var reA = /<a[^>]+href\s*=\s*["'](https?:\/\/c\.gle\/[^"']+)["'][^>]*>/ig;
     var ma;
-    while ((ma = reA.exec(html)) !== null) {
+    while ((ma = reA.exec(htmlForLink)) !== null) {
       cgleFromHtml.push(ma[1]);
     }
-    if (cgleFromHtml.length > 0) {
+    // href=3Dhttps://... style=3D... のような非引用形式も拾う
+    var reB = /<a[^>]+href\s*=\s*3D\s*(https?:\/\/c\.gle\/[^\s"'>]+)[^>]*>/ig;
+    while ((ma = reB.exec(htmlForLink)) !== null) {
+      cgleFromHtml.push(ma[1]);
+    }
+    if (!trackingLink && cgleFromHtml.length > 0) {
       cgleFromHtml.sort(function (a, b) { return b.length - a.length; });
       trackingLink = cgleFromHtml[0];
     }
@@ -1232,6 +1247,7 @@ function parseTradeInShippedMail_(message) {
     '[下取り発送parse] tradeInId=' + tradeInId +
     ', linkLen=' + (trackingLink ? trackingLink.length : 0) +
     ', linkTail=' + (trackingLink ? trackingLink.slice(-30) : '') +
+    ', linkHasSupport=' + (trackingLink && trackingLink.indexOf('support.google.com') >= 0 ? 'yes' : 'no') +
     ', number=' + (trackingNumber || '')
   );
   return { tradeInId: tradeInId, trackingLink: trackingLink, trackingNumber: trackingNumber };
