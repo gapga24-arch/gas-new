@@ -1,0 +1,11 @@
+{
+  "emeraldwalk.runonsave": {
+    "commands": [
+      {
+        "match": ".*(code\\.gs|appsscript\\.json|index\\.html|\\.gs|\\.html)$",
+        "cmd": "clasp push",
+        "isAsync": false
+      }
+    ]
+  }
+}

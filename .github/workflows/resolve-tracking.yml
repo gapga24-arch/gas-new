@@ -1,0 +1,51 @@
+# 短縮URL(c.gle)を開いて日本郵便の追跡番号(reqCodeNo1)を抽出
+# 使い方: Actions → "Resolve tracking URL" → "Run workflow" → short_url に c.gle のURLを入力
+name: Resolve tracking URL
+
+on:
+  workflow_dispatch:
+    inputs:
+      short_url:
+        description: '短縮URL (例: https://c.gle/...)'
+        required: true
+      trade_in_id:
+        description: '下取りID (任意・スプシ更新用)'
+        required: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tracking-resolver/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd tracking-resolver
+          npm ci
+
+      - name: Install Playwright browsers
+        run: |
+          cd tracking-resolver
+          npx playwright install chromium --with-deps
+
+      - name: Resolve URL and extract tracking number
+        id: resolve
+        env:
+          SHORT_URL: ${{ github.event.inputs.short_url }}
+          TRADE_IN_ID: ${{ github.event.inputs.trade_in_id }}
+          GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
+        run: |
+          cd tracking-resolver
+          node resolve.js
+
+      - name: Output result
+        run: |
+          echo "追跡番号: ${{ steps.resolve.outputs.tracking_number }}"
+          echo "下取りID: ${{ steps.resolve.outputs.trade_in_id }}"
