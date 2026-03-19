@@ -1,0 +1,13 @@
+{
+  "name": "tracking-resolver",
+  "version": "1.0.0",
+  "description": "Resolve c.gle short URL to Japan Post tracking number via Playwright",
+  "main": "resolve.js",
+  "scripts": {
+    "resolve": "node resolve.js",
+    "start": "node resolve.js"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}
