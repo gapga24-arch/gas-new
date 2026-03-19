@@ -22,10 +22,27 @@ jobs:
           TRADE_IN_ID: ${{ github.event.inputs.trade_in_id }}
         run: |
           base="${GAS_BASE%%\?*}"
-          resp=$(curl -s "${base}?action=getPending&tradeInId=${TRADE_IN_ID}")
-          short_url=$(echo "$resp" | jq -r '.shortUrl // empty')
+          url="${base}?action=getPending&tradeInId=${TRADE_IN_ID}"
+          # -L: GAS のリダイレクト追従。応答がHTMLのときは jq が壊れるので Python で JSON のみパース
+          resp=$(curl -sSL "$url" || true)
+          short_url=$(printf '%s' "$resp" | python3 -c "
+          import json, sys
+          raw = sys.stdin.read().strip().lstrip('\ufeff')
+          if not raw.startswith('{'):
+              sys.stderr.write('GASの応答がJSONではありません（Webアプリを「全員」にし、URLが /exec か確認）。先頭300文字:\n')
+              sys.stderr.write(raw[:300] + '\n')
+              sys.exit(1)
+          try:
+              d = json.loads(raw)
+              u = d.get('shortUrl') or ''
+              print(u, end='')
+          except json.JSONDecodeError as e:
+              sys.stderr.write('JSONパース失敗: ' + str(e) + '\n')
+              sys.stderr.write(raw[:400] + '\n')
+              sys.exit(1)
+          ")
           if [ -z "$short_url" ]; then
-            echo "::error::GAS から短縮URLを取得できませんでした。先に GAS を実行して PENDING を保存するか、resolve-tracking-manual ワークフローでURLを貼ってください。"
+            echo "::error::shortUrl が空です。GAS で trigger 前に PENDING が保存されているか確認してください。"
             exit 1
           fi
           echo "short_url<<EOF" >> $GITHUB_OUTPUT
