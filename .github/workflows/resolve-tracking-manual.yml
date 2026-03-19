@@ -1,4 +1,4 @@
-# 手動テスト用: 長い c.gle URL をそのまま貼る（GAS の getPending は使わない）
+# 手動テスト用: 長い c.gle URL をそのまま貼る（内部で base64 化して安全に渡す）
 name: Resolve tracking URL (manual URL)
 
 on:
@@ -22,9 +22,8 @@ jobs:
         env:
           INPUT_URL: ${{ github.event.inputs.short_url }}
         run: |
-          echo "short_url<<EOF" >> $GITHUB_OUTPUT
-          echo "$INPUT_URL" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          short_url_b64=$(python3 -c "import base64, os; print(base64.b64encode(os.environ['INPUT_URL'].encode('utf-8')).decode('ascii'), end='')")
+          echo "short_url_b64=$short_url_b64" >> $GITHUB_OUTPUT
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -46,11 +45,12 @@ jobs:
       - name: Resolve URL and extract tracking number
         id: resolve
         env:
-          SHORT_URL: ${{ steps.geturl.outputs.short_url }}
+          SHORT_URL_B64: ${{ steps.geturl.outputs.short_url_b64 }}
           TRADE_IN_ID: ${{ github.event.inputs.trade_in_id }}
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
         run: |
           cd tracking-resolver
+          export SHORT_URL=$(python3 -c "import base64, os; print(base64.b64decode(os.environ['SHORT_URL_B64']).decode('utf-8'), end='')")
           node resolve.js
 
       - name: Output result

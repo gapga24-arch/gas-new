@@ -2,7 +2,58 @@
  * 短縮URL (c.gle) をブラウザで開き、リダイレクト先の日本郵便URLから reqCodeNo1（追跡番号）を抽出する
  * 環境変数: SHORT_URL (必須), TRADE_IN_ID (任意), GAS_WEB_APP_URL (任意・GASに結果を送る)
  */
-const { chromium } = require('playwright');
+const { chromium, request } = require('playwright');
+
+function extractTrackingNumber_(text) {
+  if (!text) return '';
+  let m = String(text).match(/reqCodeNo1=(\d{10,14})/);
+  if (m) return m[1];
+  m = String(text).match(/お問い合わせ番号[\s\S]{0,120}?(\d{4}-\d{4}-\d{4})/);
+  if (m) return m[1].replace(/-/g, '');
+  return '';
+}
+
+async function resolveByHttp_(shortUrl) {
+  const api = await request.newContext({
+    ignoreHTTPSErrors: true,
+    extraHTTPHeaders: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+  });
+  let url = shortUrl;
+  for (let i = 0; i < 10; i++) {
+    const res = await api.get(url, { failOnStatusCode: false, maxRedirects: 0 });
+    const code = res.status();
+    if (code >= 300 && code < 400) {
+      const loc = res.headers()['location'];
+      if (!loc) break;
+      url = loc.startsWith('http') ? loc : new URL(loc, url).toString();
+      const n = extractTrackingNumber_(url);
+      if (n) {
+        await api.dispose();
+        return { trackingNumber: n, finalUrl: url };
+      }
+      continue;
+    }
+    const body = await res.text();
+    let n = extractTrackingNumber_(body) || extractTrackingNumber_(url);
+    if (n) {
+      await api.dispose();
+      return { trackingNumber: n, finalUrl: url };
+    }
+    const jp = body.match(/https?:\/\/trackings\.post\.japanpost\.jp[^\s"'<>]+/i);
+    if (jp) {
+      n = extractTrackingNumber_(jp[0]);
+      if (n) {
+        await api.dispose();
+        return { trackingNumber: n, finalUrl: jp[0] };
+      }
+    }
+    break;
+  }
+  await api.dispose();
+  return { trackingNumber: '', finalUrl: url };
+}
 
 async function main() {
   const shortUrl = (process.env.SHORT_URL || '').trim();
@@ -15,44 +66,52 @@ async function main() {
   }
 
   let trackingNumber = '';
+  let finalUrlForLog = shortUrl;
+
+  // まずHTTPでリダイレクト追跡（最速で安定）
+  try {
+    const byHttp = await resolveByHttp_(shortUrl);
+    if (byHttp.finalUrl) finalUrlForLog = byHttp.finalUrl;
+    if (byHttp.trackingNumber) trackingNumber = byHttp.trackingNumber;
+  } catch (e) {
+    console.warn('HTTP追跡失敗:', e.message);
+  }
+
+  // 取れなかったときだけブラウザで再試行
   const browser = await chromium.launch({ headless: true });
   try {
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      viewport: { width: 1280, height: 720 },
-      ignoreHTTPSErrors: true
-    });
-    const page = await context.newPage();
-
-    await page.goto(shortUrl, { waitUntil: 'load', timeout: 30000 });
-    try {
-      await page.waitForURL(/reqCodeNo1=|japanpost/, { timeout: 15000 });
-    } catch (_) {
-      await page.waitForTimeout(3000);
-    }
-
-    const finalUrl = page.url();
-    console.log('最終URL: ' + finalUrl.substring(0, 120) + (finalUrl.length > 120 ? '...' : ''));
-
-    let match = finalUrl.match(/reqCodeNo1=(\d+)/) || finalUrl.match(/jp&reqCodeNo1=(\d+)/);
-    if (match) trackingNumber = match[1];
     if (!trackingNumber) {
-      const body = await page.content();
-      match = body.match(/reqCodeNo1=(\d{10,14})/) || body.match(/jp&reqCodeNo1=(\d+)/);
-      if (match) trackingNumber = match[1];
+      const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        viewport: { width: 1280, height: 720 },
+        ignoreHTTPSErrors: true
+      });
+      const page = await context.newPage();
+      await page.goto(shortUrl, { waitUntil: 'load', timeout: 30000 });
+      try {
+        await page.waitForURL(/reqCodeNo1=|japanpost/, { timeout: 15000 });
+      } catch (_) {
+        await page.waitForTimeout(3000);
+      }
+      finalUrlForLog = page.url() || finalUrlForLog;
+      trackingNumber = extractTrackingNumber_(finalUrlForLog);
+      if (!trackingNumber) {
+        const body = await page.content();
+        trackingNumber = extractTrackingNumber_(body);
+        if (!trackingNumber) {
+          const href = body.match(/https?:\/\/trackings\.post\.japanpost\.jp[^\s"'<>]+/i);
+          if (href) trackingNumber = extractTrackingNumber_(href[0]);
+        }
+      }
     }
-    if (!trackingNumber) {
-      const body = await page.content();
-      match = body.match(/お問い合わせ番号[\s\S]{0,80}?(\d{4}-\d{4}-\d{4})/);
-      if (match) trackingNumber = match[1].replace(/-/g, '');
-    }
-
     await browser.close();
   } catch (e) {
     console.error('Playwright エラー:', e.message);
     await browser.close();
     process.exit(1);
   }
+
+  console.log('最終URL: ' + finalUrlForLog.substring(0, 220) + (finalUrlForLog.length > 220 ? '...' : ''));
 
   if (trackingNumber) {
     console.log('TRACKING_NUMBER=' + trackingNumber);
