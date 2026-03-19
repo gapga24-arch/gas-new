@@ -27,16 +27,30 @@ const TRADE_IN_CANCEL_DELETE_LOOKBACK_DAYS = 4;
 /** 下取り発送メールの検索範囲（日）。直近2時間だと追跡番号更新が一度も走らないため長めに */
 const TRADE_IN_SHIPPED_LOOKBACK_DAYS = 14;
 
+/** テスト用：下取り関連の処理を上から何件に制限するか。3=上から3件のみ。0=制限なし */
+const TRADE_IN_TEST_LIMIT = 3;
+
 /**
- * GitHub Actions 等から追跡番号を受け取り tracking2 の D列・L列を更新する（Webアプリとしてデプロイして使用）
- * 呼び出し例: GET /exec?tracking=679514591593&tradeInId=702843461200
+ * Webアプリとしてデプロイして使用
+ * - action=getPending&tradeInId=xxx → GASに保存した短縮URLを返し削除（GitHub用）
+ * - tracking=番号&tradeInId=xxx → tracking2 の D列・L列を更新
  */
 function doGet(e) {
   var result = { ok: false, message: '' };
   try {
     var params = e && e.parameter ? e.parameter : {};
-    var tracking = (params.tracking || '').toString().trim();
+    var action = (params.action || '').toString().trim();
     var tradeInId = (params.tradeInId || '').toString().trim().replace(/-/g, '');
+
+    if (action === 'getPending' && tradeInId) {
+      var props = PropertiesService.getScriptProperties();
+      var key = 'PENDING_' + tradeInId;
+      var shortUrl = props.getProperty(key);
+      if (shortUrl) props.deleteProperty(key);
+      return ContentService.createTextOutput(JSON.stringify({ shortUrl: shortUrl || '' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var tracking = (params.tracking || '').toString().trim();
     if (!tracking || !tradeInId) {
       result.message = 'tracking と tradeInId を指定してください';
       return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
@@ -821,13 +835,14 @@ function deleteTradeInConfirmMailsWhenCancelled_(ss) {
   }
   if (cancelOrderIds.size === 0) return { deleted: 0, rowsDeleted: 0 };
 
-  // 2. 本人確認ラベル：直近N日分を検索し、注文番号がキャンセル側と一致するメールとスプシ行を削除
+  // 2. 本人確認ラベル：直近N日分を検索し、注文番号がキャンセル側と一致するメールとスプシ行を削除（テスト時はメール3件まで）
   var sheet = ss ? ss.getSheetByName(TRACKING2_SHEET_NAME) : null;
   var toDelete = []; // { row: number, message: GmailMessage }
   var confirmThreads = getThreadsByLabelNewerThanDays_(confirmLabel, TRADE_IN_CANCEL_DELETE_LOOKBACK_DAYS);
-  for (var t = 0; t < confirmThreads.length; t++) {
+  var deleteLimit = TRADE_IN_TEST_LIMIT > 0 ? TRADE_IN_TEST_LIMIT : 999999;
+  for (var t = 0; t < confirmThreads.length && toDelete.length < deleteLimit; t++) {
     var messages = confirmThreads[t].getMessages();
-    for (var m = 0; m < messages.length; m++) {
+    for (var m = 0; m < messages.length && toDelete.length < deleteLimit; m++) {
       var message = messages[m];
       try {
         var orderParsed = parseOrderIdFromAnyMail_(message);
@@ -890,15 +905,16 @@ function processTradeInConfirmMails_(ss, processedMessageIds) {
     }
   }
 
-  const threads = getThreadsByLabelNewerThan_(label, LOOKBACK_HOURS);
+  var threads = getThreadsByLabelNewerThan_(label, LOOKBACK_HOURS);
   const rowsToAppend = [];
   var skippedDuplicate = 0;
   var skippedAlreadyProcessed = 0;
   var parseFailed = 0;
+  var addLimit = TRADE_IN_TEST_LIMIT > 0 ? TRADE_IN_TEST_LIMIT : 999999;
 
-  for (var t = 0; t < threads.length; t++) {
+  for (var t = 0; t < threads.length && rowsToAppend.length < addLimit; t++) {
     var messages = threads[t].getMessages();
-    for (var m = 0; m < messages.length; m++) {
+    for (var m = 0; m < messages.length && rowsToAppend.length < addLimit; m++) {
       var message = messages[m];
       try {
         if (processedMessageIds.has(message.getId())) {
@@ -1013,10 +1029,11 @@ function processTradeInConfirmedMails_(ss, processedMessageIds) {
   var noMatchedRow = 0;
   var skippedAlreadyProcessed = 0;
   var parseFailed = 0;
+  var updateLimit = TRADE_IN_TEST_LIMIT > 0 ? TRADE_IN_TEST_LIMIT : 999999;
 
-  for (var t = 0; t < threads.length; t++) {
+  for (var t = 0; t < threads.length && updated < updateLimit; t++) {
     var messages = threads[t].getMessages();
-    for (var m = 0; m < messages.length; m++) {
+    for (var m = 0; m < messages.length && updated < updateLimit; m++) {
       var message = messages[m];
       try {
         if (processedMessageIds.has(message.getId())) {
@@ -1081,15 +1098,16 @@ function processTradeInShippedMails_(ss, processedMessageIds) {
   }
 
   var threads = getThreadsByLabelNewerThanDays_(label, TRADE_IN_SHIPPED_LOOKBACK_DAYS);
-  Logger.log('[下取り発送] 直近' + TRADE_IN_SHIPPED_LOOKBACK_DAYS + '日のスレッド数=' + threads.length);
+  var shippedLimit = TRADE_IN_TEST_LIMIT > 0 ? TRADE_IN_TEST_LIMIT : 999999;
+  Logger.log('[下取り発送] 直近' + TRADE_IN_SHIPPED_LOOKBACK_DAYS + '日のスレッド数=' + threads.length + (TRADE_IN_TEST_LIMIT > 0 ? '（テスト用にメール' + TRADE_IN_TEST_LIMIT + '件まで）' : ''));
   var updated = 0;
   var noMatchedRow = 0;
   var skippedAlreadyProcessed = 0;
   var parseFailed = 0;
 
-  for (var t = 0; t < threads.length; t++) {
+  for (var t = 0; t < threads.length && updated < shippedLimit; t++) {
     var messages = threads[t].getMessages();
-    for (var m = 0; m < messages.length; m++) {
+    for (var m = 0; m < messages.length && updated < shippedLimit; m++) {
       var message = messages[m];
       try {
         var parsed = parseTradeInShippedMail_(message);
@@ -1108,11 +1126,14 @@ function processTradeInShippedMails_(ss, processedMessageIds) {
 
         var trackingNumber = parsed.trackingNumber || '';
         if (!trackingNumber && parsed.trackingLink) {
-          Logger.log('[下取り発送] 短縮URLを解決開始: ' + parsed.trackingLink.substring(0, 50) + '...');
-          trackingNumber = resolveTrackingNumberFromShortUrl_(parsed.trackingLink);
-          Logger.log('[下取り発送] 解決結果: 追跡番号=' + (trackingNumber || '取得できず'));
-          if (!trackingNumber) {
+          var props = PropertiesService.getScriptProperties();
+          if (props.getProperty('GITHUB_TOKEN') && props.getProperty('GITHUB_REPO')) {
+            Logger.log('[下取り発送] GitHub に任せます tradeInId=' + parsed.tradeInId);
             triggerGitHubResolve_(parsed.trackingLink, parsed.tradeInId);
+          } else {
+            Logger.log('[下取り発送] 短縮URLを解決開始: ' + parsed.trackingLink.substring(0, 50) + '...');
+            trackingNumber = resolveTrackingNumberFromShortUrl_(parsed.trackingLink);
+            Logger.log('[下取り発送] 解決結果: 追跡番号=' + (trackingNumber || '取得できず'));
           }
         }
         var needRetryLater = parsed.trackingLink && !trackingNumber;
@@ -1289,9 +1310,8 @@ function resolveTrackingNumberFromShortUrl_(shortUrl) {
 }
 
 /**
- * GitHub Actions のワークフロー（resolve-tracking）を起動し、短縮URLから追跡番号を取得させる
- * 取得後、GitHub 側が GAS Web アプリ（doGet）を呼びスプシに反映する
- * 要: Script Properties に GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW_ID を設定
+ * 短縮URLをGASに保存し、GitHub Actions を trade_in_id だけで起動。GitHub が GAS からURLを取得して追跡番号を取得しスプシに反映する
+ * （URLをAPIで送ると長くて切れるため、リンクはGAS側に保存して渡さない）
  */
 function triggerGitHubResolve_(shortUrl, tradeInId) {
   var props = PropertiesService.getScriptProperties();
@@ -1302,12 +1322,13 @@ function triggerGitHubResolve_(shortUrl, tradeInId) {
     Logger.log('[GitHub] 未設定のためスキップ: GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW_ID');
     return;
   }
+  if (!tradeInId) return;
+  props.setProperty('PENDING_' + tradeInId, shortUrl);
   var url = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + encodeURIComponent(workflowId) + '/dispatches';
   var payload = JSON.stringify({
     ref: 'main',
     inputs: {
-      short_url: shortUrl,
-      trade_in_id: tradeInId || ''
+      trade_in_id: tradeInId
     }
   });
   try {

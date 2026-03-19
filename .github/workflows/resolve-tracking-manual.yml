@@ -1,12 +1,14 @@
-# GAS から起動: trade_in_id のみ（URLは GAS の getPending で取得）
-# 手動で長いURLを貼る場合は resolve-tracking-manual.yml を使う
-name: Resolve tracking URL
+# 手動テスト用: 長い c.gle URL をそのまま貼る（GAS の getPending は使わない）
+name: Resolve tracking URL (manual URL)
 
 on:
   workflow_dispatch:
     inputs:
       trade_in_id:
         description: '下取りID（必須）'
+        required: true
+      short_url:
+        description: '短縮URL（c.gle を全文貼り付け）'
         required: true
 
 jobs:
@@ -15,21 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get short URL from GAS
+      - name: Pass URL to next step
         id: geturl
         env:
-          GAS_BASE: ${{ secrets.GAS_WEB_APP_URL }}
-          TRADE_IN_ID: ${{ github.event.inputs.trade_in_id }}
+          INPUT_URL: ${{ github.event.inputs.short_url }}
         run: |
-          base="${GAS_BASE%%\?*}"
-          resp=$(curl -s "${base}?action=getPending&tradeInId=${TRADE_IN_ID}")
-          short_url=$(echo "$resp" | jq -r '.shortUrl // empty')
-          if [ -z "$short_url" ]; then
-            echo "::error::GAS から短縮URLを取得できませんでした。先に GAS を実行して PENDING を保存するか、resolve-tracking-manual ワークフローでURLを貼ってください。"
-            exit 1
-          fi
           echo "short_url<<EOF" >> $GITHUB_OUTPUT
-          echo "$short_url" >> $GITHUB_OUTPUT
+          echo "$INPUT_URL" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Setup Node
