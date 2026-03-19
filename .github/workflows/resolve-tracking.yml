@@ -1,5 +1,4 @@
-# GAS から起動: trade_in_id のみ（URLは GAS の getPending で取得）
-# 手動で長いURLを貼る場合は resolve-tracking-manual.yml を使う
+# GAS から起動: 下取りメールの短縮URL(base64)を受け取り、追跡番号を抽出してスプシへ反映
 name: Resolve tracking URL
 
 on:
@@ -8,6 +7,9 @@ on:
       trade_in_id:
         description: '下取りID（必須）'
         required: true
+      short_url_b64:
+        description: '短縮URLのbase64（必須）'
+        required: true
 
 jobs:
   resolve:
@@ -15,34 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get short URL from GAS
+      - name: Decode short URL
         id: geturl
         env:
-          GAS_BASE: ${{ secrets.GAS_WEB_APP_URL }}
-          TRADE_IN_ID: ${{ github.event.inputs.trade_in_id }}
+          SHORT_URL_B64: ${{ github.event.inputs.short_url_b64 }}
         run: |
-          base="${GAS_BASE%%\?*}"
-          url="${base}?action=getPending&tradeInId=${TRADE_IN_ID}"
-          # -L: GAS のリダイレクト追従。応答がHTMLのときは jq が壊れるので Python で JSON のみパース
-          resp=$(curl -sSL "$url" || true)
-          short_url=$(printf '%s' "$resp" | python3 -c "
-          import json, sys
-          raw = sys.stdin.read().strip().lstrip('\ufeff')
-          if not raw.startswith('{'):
-              sys.stderr.write('GASの応答がJSONではありません（Webアプリを「全員」にし、URLが /exec か確認）。先頭300文字:\n')
-              sys.stderr.write(raw[:300] + '\n')
-              sys.exit(1)
-          try:
-              d = json.loads(raw)
-              u = d.get('shortUrl') or ''
-              print(u, end='')
-          except json.JSONDecodeError as e:
-              sys.stderr.write('JSONパース失敗: ' + str(e) + '\n')
-              sys.stderr.write(raw[:400] + '\n')
-              sys.exit(1)
-          ")
+          short_url=$(python3 -c "import base64, os; print(base64.b64decode(os.environ['SHORT_URL_B64']).decode('utf-8'), end='')")
           if [ -z "$short_url" ]; then
-            echo "::error::shortUrl が空です。GAS で trigger 前に PENDING が保存されているか確認してください。"
+            echo "::error::short_url_b64 のデコードに失敗しました"
             exit 1
           fi
           echo "short_url<<EOF" >> $GITHUB_OUTPUT

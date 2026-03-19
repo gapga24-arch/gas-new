@@ -32,7 +32,6 @@ const TRADE_IN_TEST_LIMIT = 3;
 
 /**
  * Webアプリとしてデプロイして使用
- * - action=getPending&tradeInId=xxx → GASに保存した短縮URLを返し削除（GitHub用）
  * - tracking=番号&tradeInId=xxx → tracking2 の D列・L列を更新
  */
 function doGet(e) {
@@ -1310,8 +1309,8 @@ function resolveTrackingNumberFromShortUrl_(shortUrl) {
 }
 
 /**
- * 短縮URLをGASに保存し、GitHub Actions を trade_in_id だけで起動。GitHub が GAS からURLを取得して追跡番号を取得しスプシに反映する
- * （URLをAPIで送ると長くて切れるため、リンクはGAS側に保存して渡さない）
+ * 下取り発送メールの短縮URLを GitHub Actions へ直接渡して起動する
+ * URLは base64 で渡し、長いリンクでも JSON で欠けにくくする
  */
 function triggerGitHubResolve_(shortUrl, tradeInId) {
   var props = PropertiesService.getScriptProperties();
@@ -1322,13 +1321,14 @@ function triggerGitHubResolve_(shortUrl, tradeInId) {
     Logger.log('[GitHub] 未設定のためスキップ: GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW_ID');
     return;
   }
-  if (!tradeInId) return;
-  props.setProperty('PENDING_' + tradeInId, shortUrl);
+  if (!tradeInId || !shortUrl) return;
+  var shortUrlB64 = Utilities.base64Encode(shortUrl);
   var url = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + encodeURIComponent(workflowId) + '/dispatches';
   var payload = JSON.stringify({
     ref: 'main',
     inputs: {
-      trade_in_id: tradeInId
+      trade_in_id: tradeInId,
+      short_url_b64: shortUrlB64
     }
   });
   try {
